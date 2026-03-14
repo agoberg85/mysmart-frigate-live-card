@@ -14,7 +14,8 @@ class FrigateLiveCard extends LitElement {
       _isDragging: { state: true },
       _isMuted: { state: true },
       _isLoading: { state: true },
-      _streamType: { state: true }
+      _streamType: { state: true },
+      _aspectRatio: { state: true }
     };
   }
 
@@ -30,6 +31,7 @@ class FrigateLiveCard extends LitElement {
     this._startPan = { x: 0, y: 0 };
     this._pointers = new Map();
     this._lastPinchDist = null;
+    this._aspectRatio = '16 / 9';
   }
 
   downloadUrl(url, filename) {
@@ -106,11 +108,20 @@ class FrigateLiveCard extends LitElement {
     }
   }
 
+  setAspectRatio(width, height) {
+    if (!width || !height) {
+      return;
+    }
+
+    this._aspectRatio = `${width} / ${height}`;
+  }
+
   // --- HLS & Video Handling ---
 
   async initCamera() {
     this._error = null;
     this._isLoading = true;
+    this._aspectRatio = '16 / 9';
     this.cleanupPlayer();
 
     try {
@@ -182,6 +193,10 @@ class FrigateLiveCard extends LitElement {
         videoEl.play().catch(e => console.warn('Autoplay prevented:', e));
       });
 
+      videoEl.addEventListener('loadedmetadata', () => {
+        this.setAspectRatio(videoEl.videoWidth, videoEl.videoHeight);
+      }, { once: true });
+
       this._hls.on(Hls.Events.ERROR, (event, data) => {
         if (data.fatal) {
           switch (data.type) {
@@ -205,6 +220,7 @@ class FrigateLiveCard extends LitElement {
       // Native Safari/iOS support
       videoEl.src = url;
       videoEl.addEventListener('loadedmetadata', () => {
+        this.setAspectRatio(videoEl.videoWidth, videoEl.videoHeight);
         this._isLoading = false;
       });
       videoEl.play().catch(e => console.warn('Autoplay prevented:', e));
@@ -449,7 +465,7 @@ class FrigateLiveCard extends LitElement {
           </div>
         </div>
 
-        <div class="player-container">
+        <div class="player-container" style="aspect-ratio: ${this._aspectRatio};">
           ${this._isLoading ? html`
             <div class="loading">
               <div class="spinner"></div>
@@ -481,7 +497,10 @@ class FrigateLiveCard extends LitElement {
                 src="${this._videoUrl}" 
                 crossorigin="anonymous"
                 style="width: 100%; height: 100%; display: block; object-fit: contain;"
-                @load=${() => this._isLoading = false}
+                @load=${(event) => {
+                  this.setAspectRatio(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight);
+                  this._isLoading = false;
+                }}
                 @error=${() => { this._error = 'Failed to load MJPEG stream'; this._isLoading = false; }}
               />
             ` : ''}
@@ -553,7 +572,6 @@ class FrigateLiveCard extends LitElement {
       .player-container {
         position: relative;
         width: 100%;
-        aspect-ratio: 16/9;
         overflow: hidden;
         background: #111;
       }
