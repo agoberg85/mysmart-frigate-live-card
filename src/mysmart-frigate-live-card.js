@@ -32,12 +32,51 @@ class FrigateLiveCard extends LitElement {
     this._lastPinchDist = null;
   }
 
+  downloadUrl(url, filename) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  downloadBlob(blob, filename) {
+    const objectUrl = URL.createObjectURL(blob);
+    this.downloadUrl(objectUrl, filename);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
+
+  captureFrameAsBlob(sourceEl, width, height, type = 'image/png') {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Canvas is not supported');
+    }
+
+    context.drawImage(sourceEl, 0, 0, width, height);
+
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Failed to create snapshot'));
+        }
+      }, type);
+    });
+  }
+
   setConfig(config) {
     if (!config.entity) {
       throw new Error('Please define "entity" (camera entity_id)');
     }
     this.config = {
       title: '',
+      show_title: true,
       ...config
     };
   }
@@ -324,25 +363,35 @@ class FrigateLiveCard extends LitElement {
     }
   }
 
-  takeSnapshot() {
+  async takeSnapshot() {
     const video = this.shadowRoot.querySelector('video');
     const img = this.shadowRoot.querySelector('img');
+    const filename = `snapshot-${new Date().toISOString()}.png`;
 
-    if (video && video.readyState >= 2) {
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext('2d').drawImage(video, 0, 0);
-      const link = document.createElement('a');
-      link.download = `snapshot-${new Date().toISOString()}.jpg`;
-      link.href = canvas.toDataURL('image/jpeg');
-      link.click();
-    } else if (img) {
-      // For MJPEG, we'll download the current frame
-      const link = document.createElement('a');
-      link.download = `snapshot-${new Date().toISOString()}.jpg`;
-      link.href = this._videoUrl;
-      link.click();
+    try {
+      if (video && video.readyState >= 2) {
+        const blob = await this.captureFrameAsBlob(
+          video,
+          video.videoWidth,
+          video.videoHeight
+        );
+        this.downloadBlob(blob, filename);
+        return;
+      }
+
+      if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        const blob = await this.captureFrameAsBlob(
+          img,
+          img.naturalWidth,
+          img.naturalHeight
+        );
+        this.downloadBlob(blob, filename);
+        return;
+      }
+
+      throw new Error('No frame available yet');
+    } catch (error) {
+      this._error = error.message || 'Failed to take snapshot';
     }
   }
 
@@ -370,25 +419,31 @@ class FrigateLiveCard extends LitElement {
     }
   }
 
+  getDisplayTitle() {
+    if (this.config.show_title === false) {
+      return '';
+    }
+
+    return this.config.title || this.config.entity;
+  }
+
   render() {
+    const displayTitle = this.getDisplayTitle();
+
     return html`
       <ha-card>
         <div class="header">
-          <div class="live-indicator">
-            <span class="blink" style="background: ${this._streamType === 'mjpeg' ? '#ff9800' : '#f44336'}"></span> 
-            ${this._streamType === 'mjpeg' ? 'LIVE (MJPEG)' : 'LIVE'}
-          </div>
-          <div class="title">${this.config.title}</div>
+          ${displayTitle ? html`<div class="title">${displayTitle}</div>` : html`<div class="spacer"></div>`}
           <div class="controls">
             ${this._streamType === 'hls' ? html`
-              <button class="icon-btn" @click=${this.toggleMute} title="${this._isMuted ? 'Unmute' : 'Mute'}">
+              <button class="icon-btn" @click=${this.toggleMute} title="${this._isMuted ? 'Unmute' : 'Mute'}" aria-label="${this._isMuted ? 'Unmute' : 'Mute'}">
                 <ha-icon icon="mdi:${this._isMuted ? 'volume-off' : 'volume-high'}"></ha-icon>
               </button>
             ` : ''}
-            <button class="icon-btn" @click=${this.takeSnapshot} title="Snapshot">
+            <button class="icon-btn" @click=${this.takeSnapshot} title="Snapshot" aria-label="Take snapshot">
               <ha-icon icon="mdi:camera"></ha-icon>
             </button>
-            <button class="icon-btn" @click=${this.toggleFullscreen} title="Fullscreen">
+            <button class="icon-btn" @click=${this.toggleFullscreen} title="Fullscreen" aria-label="Toggle fullscreen">
               <ha-icon icon="mdi:fullscreen"></ha-icon>
             </button>
           </div>
@@ -418,11 +473,13 @@ class FrigateLiveCard extends LitElement {
                 autoplay 
                 ?muted=${this._isMuted}
                 playsinline 
+                crossorigin="anonymous"
                 style="width: 100%; height: 100%; display: block; object-fit: contain;"
               ></video>
             ` : this._streamType === 'mjpeg' ? html`
               <img 
                 src="${this._videoUrl}" 
+                crossorigin="anonymous"
                 style="width: 100%; height: 100%; display: block; object-fit: contain;"
                 @load=${() => this._isLoading = false}
                 @error=${() => { this._error = 'Failed to load MJPEG stream'; this._isLoading = false; }}
@@ -459,31 +516,31 @@ class FrigateLiveCard extends LitElement {
         top: 0; left: 0; right: 0;
         z-index: 10;
         background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
-        padding: 10px;
+        padding: 10px 12px;
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-end;
+        gap: 12px;
         pointer-events: none;
       }
       
       .header > * { pointer-events: auto; }
-
-      .live-indicator {
-        display: flex; align-items: center; gap: 6px;
-        font-size: 10px; font-weight: bold; color: #f44336;
-        background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
-      }
-      .blink { 
-        width: 8px; height: 8px; background: #f44336; border-radius: 50%; 
-        animation: blinker 1s linear infinite; 
-      }
       
       .title { 
         font-weight: 500; font-size: 14px; text-shadow: 0 1px 2px black;
-        flex: 1; text-align: center; margin: 0 10px;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
-      .controls { display: flex; gap: 8px; }
+      .spacer {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .controls { display: flex; gap: 6px; flex-shrink: 0; }
       .icon-btn { 
         background: rgba(255,255,255,0.2); border: none; color: white; 
         border-radius: 50%; width: 32px; height: 32px; cursor: pointer; 
@@ -584,7 +641,6 @@ class FrigateLiveCard extends LitElement {
         max-width: 80%;
       }
 
-      @keyframes blinker { 50% { opacity: 0; } }
       @keyframes spin { to { transform: rotate(360deg); } }
 
       @media (max-width: 600px) {

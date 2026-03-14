@@ -10,9 +10,9 @@ Subscribe to Youtube channel: https://www.youtube.com/@My_Smart_Home
 ## Features
 - **Native Live View:** Uses Home Assistant camera streaming with HLS playback when available.
 - **MJPEG Fallback:** Falls back to MJPEG automatically if HLS is unavailable.
-- **Pan & Zoom:** Supports mouse wheel zoom, drag-to-pan, and touch pinch gestures.
-- **Quick Controls:** Includes mute, snapshot, fullscreen, and zoom reset actions.
-- **Buildable Locally:** Bundled with Rollup so you can run `npm install && npm run build` instead of relying on jsDelivr.
+- **Flexible Header:** Optionally hide the title or override it with a custom label.
+- **Zoom Controls:** Supports mouse wheel, button, and touch-based zoom, with drag repositioning while zoomed in.
+- **Quick Controls:** Includes mute, snapshot-to-PNG, fullscreen, and zoom reset actions.
 
 ## Installation
 
@@ -32,6 +32,8 @@ Subscribe to Youtube channel: https://www.youtube.com/@My_Smart_Home
    - URL: `/local/mysmart-frigate-live-card.js`
    - Resource Type: `JavaScript Module`
 
+Important: do not load `src/mysmart-frigate-live-card.js` in Home Assistant. That file is the development source and contains npm-style imports. Home Assistant should load the built bundle `mysmart-frigate-live-card.js` from the repository root or from a release asset.
+
 ## Configuration
 
 ### Main Options
@@ -39,15 +41,27 @@ Subscribe to Youtube channel: https://www.youtube.com/@My_Smart_Home
 | :--- | :--- | :--- | :--- | :--- |
 | `type` | string | **Required** | `custom:mysmart-frigate-live` | |
 | `entity` | string | **Required** | Camera entity to display. | |
-| `title` | string | Optional | Title shown in the card header. | `''` |
+| `show_title` | boolean | Optional | Show or hide the header title area. | `true` |
+| `title` | string | Optional | Custom title shown in the card header. Falls back to the entity id when empty. | `''` |
 
-## Example
+## Examples
 
 ```yaml
 type: custom:mysmart-frigate-live
 entity: camera.front_door
 title: Front Door Live
 ```
+
+```yaml
+type: custom:mysmart-frigate-live
+entity: camera.front_door
+show_title: false
+```
+
+## Notes
+
+- The snapshot button saves the currently displayed frame as a `.png` image.
+- Home Assistant should load the built `mysmart-frigate-live-card.js` bundle, not the source file inside `src/`.
 
 ## Local development
 
