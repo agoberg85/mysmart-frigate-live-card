@@ -61,7 +61,6 @@ show_title: false
 ## Notes
 
 - The snapshot button saves the currently displayed frame as a `.png` image.
-- Home Assistant should load the built `mysmart-frigate-live-card.js` bundle, not the source file inside `src/`.
 
 ## Local development
 
