@@ -12,7 +12,7 @@ Subscribe to Youtube channel: https://www.youtube.com/@My_Smart_Home
 - **MJPEG Fallback:** Falls back to MJPEG automatically if HLS is unavailable.
 - **Flexible Header:** Optionally hide the title or override it with a custom label.
 - **Zoom Controls:** Supports mouse wheel, button, and touch-based zoom, with drag repositioning while zoomed in.
-- **Quick Controls:** Includes mute, snapshot-to-PNG, fullscreen, and zoom reset actions.
+- **Quick Controls:** Includes snapshot-to-PNG, fullscreen, zoom reset, and mute when audio is available.
 
 ## Installation
 
