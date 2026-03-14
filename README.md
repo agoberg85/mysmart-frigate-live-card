@@ -11,8 +11,9 @@ Subscribe to Youtube channel: https://www.youtube.com/@My_Smart_Home
 - **Native Live View:** Uses Home Assistant camera streaming with HLS playback when available.
 - **MJPEG Fallback:** Falls back to MJPEG automatically if HLS is unavailable.
 - **Flexible Header:** Optionally hide the title or override it with a custom label.
+- **Flexible Streaming:** Optionally skip HLS and go straight to MJPEG for cameras that are slow or unreliable with Home Assistant HLS.
 - **Zoom Controls:** Supports mouse wheel, button, and touch-based zoom, with drag repositioning while zoomed in.
-- **Quick Controls:** Includes snapshot-to-PNG, fullscreen, zoom reset, and mute when audio is available.
+- **Quick Controls:** Includes snapshot-to-PNG, fullscreen, zoom reset, and optional mute control when audio is available.
 
 ## Installation
 
@@ -43,6 +44,8 @@ Important: do not load `src/mysmart-frigate-live-card.js` in Home Assistant. Tha
 | `entity` | string | **Required** | Camera entity to display. | |
 | `show_title` | boolean | Optional | Show or hide the header title area. | `true` |
 | `title` | string | Optional | Custom title shown in the card header. Falls back to the entity id when empty. | `''` |
+| `show_mute` | boolean | Optional | Show the mute button when the card is using HLS playback. Hidden by default. | `false` |
+| `prefer_mjpeg` | boolean | Optional | Skip HLS and go directly to the MJPEG stream. Useful for cameras with flaky or slow Home Assistant HLS playback. | `false` |
 
 ## Examples
 
@@ -50,6 +53,7 @@ Important: do not load `src/mysmart-frigate-live-card.js` in Home Assistant. Tha
 type: custom:mysmart-frigate-live
 entity: camera.front_door
 title: Front Door Live
+show_mute: true
 ```
 
 ```yaml
@@ -58,9 +62,18 @@ entity: camera.front_door
 show_title: false
 ```
 
+```yaml
+type: custom:mysmart-frigate-live
+entity: camera.ringeklokke_fluent
+title: Doorbell
+prefer_mjpeg: true
+```
+
 ## Notes
 
 - The snapshot button saves the currently displayed frame as a `.png` image.
+- Playback starts muted by default to improve autoplay reliability. Set `show_mute: true` if you want users to be able to turn audio on.
+- For cameras with unreliable HLS playback in Home Assistant, try `prefer_mjpeg: true`.
 
 ## Local development
 

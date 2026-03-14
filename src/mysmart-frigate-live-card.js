@@ -22,6 +22,8 @@ class FrigateLiveCard extends LitElement {
   constructor() {
     super();
     this._hls = null;
+    this._playerTimeout = null;
+    this._initToken = 0;
     this._zoom = 1;
     this._panX = 0;
     this._panY = 0;
@@ -79,6 +81,8 @@ class FrigateLiveCard extends LitElement {
     this.config = {
       title: '',
       show_title: true,
+      show_mute: false,
+      prefer_mjpeg: false,
       ...config
     };
   }
@@ -102,9 +106,21 @@ class FrigateLiveCard extends LitElement {
   }
 
   cleanupPlayer() {
+    if (this._playerTimeout) {
+      window.clearTimeout(this._playerTimeout);
+      this._playerTimeout = null;
+    }
+
     if (this._hls) {
       this._hls.destroy();
       this._hls = null;
+    }
+
+    const videoEl = this.shadowRoot?.querySelector('video');
+    if (videoEl) {
+      videoEl.pause();
+      videoEl.removeAttribute('src');
+      videoEl.load();
     }
   }
 
@@ -116,9 +132,53 @@ class FrigateLiveCard extends LitElement {
     this._aspectRatio = `${width} / ${height}`;
   }
 
+  startPlayerTimeout(onTimeout) {
+    if (this._playerTimeout) {
+      window.clearTimeout(this._playerTimeout);
+    }
+
+    this._playerTimeout = window.setTimeout(() => {
+      this._playerTimeout = null;
+      onTimeout();
+    }, 10000);
+  }
+
+  clearPlayerTimeout() {
+    if (this._playerTimeout) {
+      window.clearTimeout(this._playerTimeout);
+      this._playerTimeout = null;
+    }
+  }
+
+  fallbackToMjpeg(entity, reason = 'Unknown error', token = this._initToken) {
+    if (token !== this._initToken) {
+      return false;
+    }
+
+    this.cleanupPlayer();
+
+    let mjpegUrl = entity?.attributes?.entity_picture;
+    if (mjpegUrl?.includes('/camera_proxy/')) {
+      mjpegUrl = mjpegUrl.replace('/camera_proxy/', '/camera_proxy_stream/');
+    }
+
+    if (!mjpegUrl) {
+      this._error = `Stream playback failed: ${reason}`;
+      this._isLoading = false;
+      return false;
+    }
+
+    console.warn(`Falling back to MJPEG for ${this.config.entity}: ${reason}`);
+    this._videoUrl = mjpegUrl;
+    this._streamType = 'mjpeg';
+    this._isLoading = false;
+    return true;
+  }
+
   // --- HLS & Video Handling ---
 
   async initCamera() {
+    const token = ++this._initToken;
     this._error = null;
     this._isLoading = true;
     this._aspectRatio = '16 / 9';
@@ -128,12 +188,23 @@ class FrigateLiveCard extends LitElement {
       const entity = this.hass.states[this.config.entity];
       if (!entity) throw new Error(`Entity ${this.config.entity} not found`);
 
+      if (this.config.prefer_mjpeg) {
+        if (!this.fallbackToMjpeg(entity, 'MJPEG preferred by configuration', token)) {
+          throw new Error('Camera does not support MJPEG streaming');
+        }
+        return;
+      }
+
       // Attempt 1: Try to get HLS Stream (High Quality)
       try {
         const result = await this.hass.callWS({
           type: 'camera/stream',
           entity_id: this.config.entity
         });
+
+        if (token !== this._initToken) {
+          return;
+        }
 
         let url = result.url;
         // Fix for relative URLs
@@ -144,24 +215,10 @@ class FrigateLiveCard extends LitElement {
         this._streamType = 'hls';
         this._videoUrl = url;
         await this.updateComplete;
-        this.initPlayer(url);
+        this.initPlayer(url, entity, token);
 
       } catch (streamError) {
-        // Attempt 2: Fallback to MJPEG Stream
-        console.warn("HLS Stream failed, falling back to MJPEG:", streamError.message);
-
-        let mjpegUrl = entity.attributes.entity_picture;
-
-        if (mjpegUrl) {
-          // Switch from single image to stream
-          if (mjpegUrl.includes('/camera_proxy/')) {
-            mjpegUrl = mjpegUrl.replace('/camera_proxy/', '/camera_proxy_stream/');
-          }
-
-          this._videoUrl = mjpegUrl;
-          this._streamType = 'mjpeg';
-          this._isLoading = false;
-        } else {
+        if (!this.fallbackToMjpeg(entity, streamError.message, token)) {
           throw new Error("Camera does not support Streaming or MJPEG");
         }
       }
@@ -172,9 +229,17 @@ class FrigateLiveCard extends LitElement {
     }
   }
 
-  initPlayer(url) {
+  initPlayer(url, entity, token = this._initToken) {
     const videoEl = this.shadowRoot.querySelector('video');
     if (!videoEl) return;
+
+    videoEl.muted = this._isMuted;
+    videoEl.defaultMuted = this._isMuted;
+    videoEl.playsInline = true;
+
+    this.startPlayerTimeout(() => {
+      this.fallbackToMjpeg(entity, 'HLS startup timed out', token);
+    });
 
     if (Hls.isSupported()) {
       this._hls = new Hls({
@@ -189,28 +254,45 @@ class FrigateLiveCard extends LitElement {
       this._hls.attachMedia(videoEl);
 
       this._hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (token !== this._initToken) {
+          return;
+        }
+
         this._isLoading = false;
+        this.clearPlayerTimeout();
+        videoEl.muted = this._isMuted;
         videoEl.play().catch(e => console.warn('Autoplay prevented:', e));
       });
 
       videoEl.addEventListener('loadedmetadata', () => {
+        if (token !== this._initToken) {
+          return;
+        }
+
         this.setAspectRatio(videoEl.videoWidth, videoEl.videoHeight);
       }, { once: true });
 
       this._hls.on(Hls.Events.ERROR, (event, data) => {
+        if (token !== this._initToken || !data.fatal) {
+          return;
+        }
+
+        const reason = data.details || data.type || 'HLS playback error';
+
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          if (this.fallbackToMjpeg(entity, reason, token)) {
+            return;
+          }
+        }
+
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              console.log("Fatal network error, attempting recovery");
-              this._hls.startLoad();
-              break;
             case Hls.ErrorTypes.MEDIA_ERROR:
-              console.log("Fatal media error, attempting recovery");
-              this._hls.recoverMediaError();
-              break;
             default:
               this._error = "Stream playback failed";
               this._isLoading = false;
+              this.clearPlayerTimeout();
               this.cleanupPlayer();
               break;
           }
@@ -220,10 +302,24 @@ class FrigateLiveCard extends LitElement {
       // Native Safari/iOS support
       videoEl.src = url;
       videoEl.addEventListener('loadedmetadata', () => {
+        if (token !== this._initToken) {
+          return;
+        }
+
         this.setAspectRatio(videoEl.videoWidth, videoEl.videoHeight);
         this._isLoading = false;
-      });
+        this.clearPlayerTimeout();
+        videoEl.muted = this._isMuted;
+      }, { once: true });
+
+      videoEl.addEventListener('error', () => {
+        this.fallbackToMjpeg(entity, 'Native HLS playback failed', token);
+      }, { once: true });
+
+      videoEl.muted = this._isMuted;
       videoEl.play().catch(e => console.warn('Autoplay prevented:', e));
+    } else {
+      this.fallbackToMjpeg(entity, 'HLS is not supported in this browser', token);
     }
   }
 
@@ -451,7 +547,7 @@ class FrigateLiveCard extends LitElement {
         <div class="header">
           ${displayTitle ? html`<div class="title">${displayTitle}</div>` : html`<div class="spacer"></div>`}
           <div class="controls">
-            ${this._streamType === 'hls' ? html`
+            ${this.config.show_mute && this._streamType === 'hls' ? html`
               <button class="icon-btn" @click=${this.toggleMute} title="${this._isMuted ? 'Unmute' : 'Mute'}" aria-label="${this._isMuted ? 'Unmute' : 'Mute'}">
                 <ha-icon icon="mdi:${this._isMuted ? 'volume-off' : 'volume-high'}"></ha-icon>
               </button>
